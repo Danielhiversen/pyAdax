@@ -4,7 +4,7 @@ setup(
     name='adax',
     packages=['adax'],
     install_requires=['aiohttp>=3.0.6', 'async_timeout>=1.4.0'],
-    version='0.0.1',
+    version='0.1.0',
     description='A python3 library to communicate with Adax',
     long_description='A python3 library to communicate with Adax',
     python_requires='>=3.5.3',
