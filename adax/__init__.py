@@ -10,7 +10,7 @@ from aiohttp import ClientError
 _LOGGER = logging.getLogger(__name__)
 
 API_URL = "https://api-1.adax.no/client-api"
-RATE_LIMIT_SECONDS = 5
+RATE_LIMIT_SECONDS = 10
 
 
 class Adax:
@@ -102,7 +102,7 @@ class Adax:
 
     async def fetch_rooms_info(self):
         """Get rooms info."""
-        response = await self._request(API_URL + "/rest/v1/content/")
+        response = await self._request(API_URL + "/rest/v1/content/", retry=1)
         if response is None:
             return
         json_data = await response.json()
