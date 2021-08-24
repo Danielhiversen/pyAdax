@@ -136,8 +136,8 @@ class Adax:
                 self._access_token = None
                 if retry > 0:
                     if response.status == 429:
-                        _LOGGER.warning("Too many requests, will retry")
-                        await asyncio.sleep(RATE_LIMIT_SECONDS * max(1, (4 - retry)))
+                        _LOGGER.warning("Too many requests")
+                        return None
                     return await self._request(url, json_data, retry=retry - 1)
                 _LOGGER.error(
                     "Error connecting to Adax, response: %s %s",
