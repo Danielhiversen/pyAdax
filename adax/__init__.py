@@ -125,7 +125,7 @@ class Adax:
 
         headers = {"Authorization": f"Bearer {self._access_token}"}
         try:
-            with async_timeout.timeout(self._timeout):
+            async with async_timeout.timeout(self._timeout):
                 if json_data:
                     response = await self.websession.post(
                         url, json=json_data, headers=headers
@@ -164,7 +164,7 @@ class Adax:
 async def get_adax_token(websession, account_id, password, retry=3, timeout=10):
     """Get token for Adax."""
     try:
-        with async_timeout.timeout(timeout):
+        async with async_timeout.timeout(timeout):
             response = await websession.post(
                 f"{API_URL}/auth/token",
                 headers={
