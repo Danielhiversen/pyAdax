@@ -3,7 +3,7 @@ from setuptools import setup
 setup(
     name="adax",
     packages=["adax"],
-    install_requires=["aiohttp>=3.0.6", "async_timeout>=1.4.0"],
+    install_requires=["aiohttp>=3.0.6", "async_timeout>=3.0.0"],
     version="0.1.1",
     description="A python3 library to communicate with Adax",
     long_description="A python3 library to communicate with Adax",
