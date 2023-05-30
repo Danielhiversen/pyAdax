@@ -46,6 +46,7 @@ class Adax:
             _LOGGER.debug("Skip update")
             return
         await self.fetch_rooms_info()
+        await self.fetch_energy_info()
 
     async def set_room_target_temperature(self, room_id, temperature, heating_enabled):
         """Set target temperature of the room."""
