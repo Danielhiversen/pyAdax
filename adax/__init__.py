@@ -23,6 +23,7 @@ class Adax:
         self.websession = websession
         self._access_token = None
         self._rooms = []
+        self._energy = {}
         self._timeout = 10
 
         self._prev_request = datetime.datetime.utcnow() - datetime.timedelta(hours=2)
@@ -45,6 +46,7 @@ class Adax:
             _LOGGER.debug("Skip update")
             return
         await self.fetch_rooms_info()
+        await self.fetch_energy_info()
 
     async def set_room_target_temperature(self, room_id, temperature, heating_enabled):
         """Set target temperature of the room."""
@@ -112,6 +114,21 @@ class Adax:
         for room in self._rooms:
             room["targetTemperature"] = room.get("targetTemperature", 0) / 100.0
             room["temperature"] = room.get("temperature", 0) / 100.0
+
+    async def fetch_energy_info(self):
+        """Get rooms info."""
+        room_energy = {}
+        for room in self._rooms:
+            room_id = room["id"]
+            response = await self._request(f"{API_URL}/rest/v1/energy_log/{room_id}", retry=1)
+            if response is None:
+                return
+            json_data = await response.json()
+            if json_data is None:
+                return
+            room_energy[room_id] = json_data
+        self._energy = room_energy
+        
 
     async def _request(self, url, json_data=None, retry=3):
         self._prev_request = datetime.datetime.utcnow()
