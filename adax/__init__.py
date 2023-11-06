@@ -16,13 +16,16 @@ RATE_LIMIT_SECONDS = 10
 class Adax:
     """Adax data handler."""
 
-    def __init__(self, account_id, password, websession):
+    def __init__(self, account_id, password, websession, withenergy=False):
         """Init Adax data handler."""
         self._account_id = account_id
         self._password = password
+        self.withenergy = withenergy
         self.websession = websession
         self._access_token = None
+        self._homes = []
         self._rooms = []
+        self._devices = []
         self._energy = {}
         self._timeout = 10
 
@@ -31,10 +34,25 @@ class Adax:
         self._write_task = None
         self._pending_writes = {"rooms": []}
 
+    async def get_homes(self):
+        """Get Adax homes."""
+        await self.update()
+        return self._homes
+
     async def get_rooms(self):
         """Get Adax rooms."""
         await self.update()
         return self._rooms
+
+    async def get_devices(self):
+        """Get Adax devices."""
+        await self.update()
+        return self._devices
+
+    async def get_energy(self):
+        """Get Adax energy."""
+        await self.update()
+        return self._energy
 
     async def update(self):
         """Update data."""
@@ -104,13 +122,18 @@ class Adax:
 
     async def fetch_rooms_info(self):
         """Get rooms info."""
-        response = await self._request(API_URL + "/rest/v1/content/", retry=1)
+        withenergy_query = ""
+        if self.withenergy:
+            withenergy_query = "?withEnergy=1"
+        response = await self._request(f"{API_URL}/rest/v1/content/{withenergy_query}", retry=1)
         if response is None:
             return
         json_data = await response.json()
         if json_data is None:
             return
+        self._homes = json_data["homes"]
         self._rooms = json_data["rooms"]
+        self._devices = json_data["devices"]
         for room in self._rooms:
             room["targetTemperature"] = room.get("targetTemperature", 0) / 100.0
             room["temperature"] = room.get("temperature", 0) / 100.0
