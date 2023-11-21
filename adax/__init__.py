@@ -112,7 +112,7 @@ class Adax:
     async def fetch_rooms_info(self):
         """Get rooms info."""
         try:
-            response = await self._request(API_URL + "/rest/v1/content/", retry=1)
+            response = await self._request(API_URL + "/rest/v1/content/?withEnergy=1", retry=1)
         except RateLimitError:
             return
         if response is None:
@@ -120,7 +120,11 @@ class Adax:
         json_data = await response.json()
         if json_data is None:
             return
+
         for room in json_data["rooms"]:
+            for dev in json_data["devices"]:
+                if dev["roomId"] == room["id"]:
+                    room["energyWh"] = room.get("energyWh", 0) + dev["energyWh"]
             room["targetTemperature"] = room.get("targetTemperature", 0) / 100.0
             room["temperature"] = room.get("temperature", 0) / 100.0
         self._rooms = json_data["rooms"]
