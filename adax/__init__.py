@@ -86,11 +86,11 @@ class Adax:
         _LOGGER.debug("Delaying request %.1fs", delay)
         await asyncio.sleep(delay)
 
-        for k in range(3):
+        for _ in range(3):
             try:
                 resp = await self._request(API_URL + "/rest/v1/control/", json_data=json_data)
             except RateLimitError:
-                await asyncio.sleep(10*k)
+                await asyncio.sleep(10)
             else:
                 break
         if resp  is not None:
