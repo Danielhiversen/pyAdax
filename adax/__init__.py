@@ -10,7 +10,10 @@ from aiohttp import ClientError
 _LOGGER = logging.getLogger(__name__)
 
 API_URL = "https://api-1.adax.no/client-api"
-RATE_LIMIT_SECONDS = 10
+RATE_LIMIT_SECONDS = 30
+
+class RateLimitError(Exception):
+    pass
 
 
 class Adax:
@@ -43,10 +46,9 @@ class Adax:
             < datetime.timedelta(seconds=RATE_LIMIT_SECONDS)
             or self._write_task is not None
         ):
-            _LOGGER.debug("Skip update")
+            _LOGGER.debug("Skip update due to rate limit")
             return
         await self.fetch_rooms_info()
-        await self.fetch_energy_info()
 
     async def set_room_target_temperature(self, room_id, temperature, heating_enabled):
         """Set target temperature of the room."""
@@ -74,7 +76,7 @@ class Adax:
     async def _write_set_room_target_temperature(self, json_data):
         now = datetime.datetime.utcnow()
         delay = max(
-            0.1,
+            1,
             (
                 self._prev_request
                 + datetime.timedelta(seconds=RATE_LIMIT_SECONDS)
@@ -83,10 +85,15 @@ class Adax:
         )
         _LOGGER.debug("Delaying request %.1fs", delay)
         await asyncio.sleep(delay)
-        if (
-            await self._request(API_URL + "/rest/v1/control/", json_data=json_data)
-            is not None
-        ):
+
+        for _ in range(3):
+            try:
+                resp = await self._request(API_URL + "/rest/v1/control/", json_data=json_data)
+            except RateLimitError:
+                await asyncio.sleep(10)
+            else:
+                break
+        if resp  is not None:
             for room_i in self._rooms.copy():
                 for room_j in json_data.get("rooms"):
                     if room_i["id"] == room_j["id"]:
@@ -104,23 +111,33 @@ class Adax:
 
     async def fetch_rooms_info(self):
         """Get rooms info."""
-        response = await self._request(API_URL + "/rest/v1/content/", retry=1)
+        try:
+            response = await self._request(API_URL + "/rest/v1/content/?withEnergy=1", retry=1)
+        except RateLimitError:
+            return
         if response is None:
             return
         json_data = await response.json()
         if json_data is None:
             return
-        self._rooms = json_data["rooms"]
-        for room in self._rooms:
+
+        for room in json_data["rooms"]:
+            for dev in json_data["devices"]:
+                if dev["roomId"] == room["id"]:
+                    room["energyWh"] = room.get("energyWh", 0) + dev["energyWh"]
             room["targetTemperature"] = room.get("targetTemperature", 0) / 100.0
             room["temperature"] = room.get("temperature", 0) / 100.0
+        self._rooms = json_data["rooms"]
 
     async def fetch_energy_info(self):
         """Get rooms info."""
         room_energy = {}
         for room in self._rooms:
             room_id = room["id"]
-            response = await self._request(f"{API_URL}/rest/v1/energy_log/{room_id}", retry=1)
+            try:
+                response = await self._request(f"{API_URL}/rest/v1/energy_log/{room_id}", retry=1)
+            except RateLimitError:
+                return
             if response is None:
                 return
             json_data = await response.json()
@@ -128,9 +145,16 @@ class Adax:
                 return
             room_energy[room_id] = json_data
         self._energy = room_energy
-        
 
-    async def _request(self, url, json_data=None, retry=3):
+
+    async def _request(self, url, json_data=None, retry=0):
+        if (
+            datetime.datetime.utcnow() - self._prev_request
+            < datetime.timedelta(seconds=RATE_LIMIT_SECONDS)
+        ):
+            _LOGGER.warning("Max 1 request per %s seconds", RATE_LIMIT_SECONDS)
+            raise RateLimitError("Max 1 request per %s seconds", RATE_LIMIT_SECONDS)
+
         self._prev_request = datetime.datetime.utcnow()
         _LOGGER.debug("Request %s %s, %s", url, retry, json_data)
         if self._access_token is None:
@@ -149,6 +173,7 @@ class Adax:
                     )
                 else:
                     response = await self.websession.get(url, headers=headers)
+
             if response.status != 200:
                 self._access_token = None
                 if retry > 0:
