@@ -12,8 +12,17 @@ _LOGGER = logging.getLogger(__name__)
 API_URL = "https://api-1.adax.no/client-api"
 RATE_LIMIT_SECONDS = 30
 
-class RateLimitError(Exception):
-    pass
+
+class AdaxError(Exception):
+    """Base exception for Adax errors."""
+
+
+class RateLimitError(AdaxError):
+    """Raised when the Adax API rate limit would be exceeded."""
+
+
+class AdaxControlError(AdaxError):
+    """Raised when setting the target temperature failed."""
 
 
 class Adax:
@@ -30,8 +39,9 @@ class Adax:
         self._timeout = 10
 
         self._prev_request = datetime.datetime.utcnow() - datetime.timedelta(hours=2)
-        self._set_event = asyncio.Event()
+        self._write_future = None
         self._write_task = None
+        self._write_id = 0
         self._pending_writes = {"rooms": []}
 
     async def get_rooms(self):
@@ -51,9 +61,19 @@ class Adax:
         await self.fetch_rooms_info()
 
     async def set_room_target_temperature(self, room_id, temperature, heating_enabled):
-        """Set target temperature of the room."""
+        """Set target temperature of the room.
+
+        Writes issued while a previous write is still pending are merged into
+        a single request. All callers of the merged request get its outcome.
+
+        Raises AdaxControlError if the request fails.
+        """
         if self._write_task is not None:
+            # Supersede the pending write; its rooms are kept in the new batch
+            # and its callers keep waiting on the same future.
             self._write_task.cancel()
+        if self._write_future is None or self._write_future.done():
+            self._write_future = asyncio.get_running_loop().create_future()
         self._pending_writes["rooms"] = [
             room
             for room in self._pending_writes["rooms"]
@@ -68,12 +88,53 @@ class Adax:
             }
         )
 
+        self._write_id += 1
+        future = self._write_future
         self._write_task = asyncio.ensure_future(
-            self._write_set_room_target_temperature(self._pending_writes.copy())
+            self._write_set_room_target_temperature(
+                {"rooms": list(self._pending_writes["rooms"])},
+                self._write_id,
+                future,
+            )
         )
-        await self._set_event.wait()
+        # Shield the shared future, so cancelling one caller does not cancel
+        # the write for the others.
+        await asyncio.shield(future)
 
-    async def _write_set_room_target_temperature(self, json_data):
+    async def _write_set_room_target_temperature(self, json_data, write_id, future):
+        """Send the pending writes and resolve the future with the outcome."""
+        try:
+            await self._send_room_target_temperature(json_data)
+        except asyncio.CancelledError:
+            if write_id != self._write_id:
+                # Superseded by a newer write, which resolves the future.
+                raise
+            self._finish_write(future, exception=None, cancelled=True)
+            raise
+        except AdaxControlError as err:
+            self._finish_write(future, exception=err)
+        except Exception as err:  # pylint: disable=broad-except
+            control_err = AdaxControlError(f"Failed to set target temperature: {err}")
+            control_err.__cause__ = err
+            self._finish_write(future, exception=control_err)
+        else:
+            self._finish_write(future, exception=None)
+
+    def _finish_write(self, future, exception, cancelled=False):
+        """Reset the write state and resolve the future."""
+        self._pending_writes = {"rooms": []}
+        self._write_task = None
+        if future.done():
+            return
+        if cancelled:
+            future.cancel()
+        elif exception is not None:
+            future.set_exception(exception)
+        else:
+            future.set_result(None)
+
+    async def _send_room_target_temperature(self, json_data):
+        """Send a control request, respecting the rate limit."""
         now = datetime.datetime.utcnow()
         delay = max(
             1,
@@ -86,28 +147,33 @@ class Adax:
         _LOGGER.debug("Delaying request %.1fs", delay)
         await asyncio.sleep(delay)
 
+        resp = None
         for _ in range(3):
             try:
-                resp = await self._request(API_URL + "/rest/v1/control/", json_data=json_data)
+                resp = await self._request(
+                    API_URL + "/rest/v1/control/", json_data=json_data
+                )
             except RateLimitError:
                 await asyncio.sleep(10)
             else:
                 break
-        if resp  is not None:
-            for room_i in self._rooms.copy():
-                for room_j in json_data.get("rooms"):
-                    if room_i["id"] == room_j["id"]:
-                        room_i["targetTemperature"] = (
-                            float(room_j.get("targetTemperature", 0)) / 100.0
-                        )
-                        if room_j.get("heatingEnabled") is not None:
-                            room_i["heatingEnabled"] = room_j["heatingEnabled"]
-                        break
+        else:
+            raise AdaxControlError(
+                "Rate limit exceeded when setting target temperature"
+            )
 
-        self._pending_writes = {"rooms": []}
-        self._set_event.set()
-        self._set_event.clear()
-        self._write_task = None
+        if resp is None:
+            raise AdaxControlError("Failed to set target temperature")
+
+        for room_i in self._rooms.copy():
+            for room_j in json_data.get("rooms"):
+                if room_i["id"] == room_j["id"]:
+                    room_i["targetTemperature"] = (
+                        float(room_j.get("targetTemperature", 0)) / 100.0
+                    )
+                    if room_j.get("heatingEnabled") is not None:
+                        room_i["heatingEnabled"] = room_j["heatingEnabled"]
+                    break
 
     async def fetch_rooms_info(self):
         """Get rooms info."""
