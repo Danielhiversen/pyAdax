@@ -139,11 +139,25 @@ class Adax:
         """Get the energy log of each room.
 
         Return the logs by room id, or None if no new data was received. The
-        logs from the last successful fetch are kept.
+        logs from the last successful fetch are kept. There is one request per
+        room, so with several rooms this waits RATE_LIMIT_SECONDS between them.
         """
         room_energy = {}
         for room in self._rooms:
             room_id = room["id"]
+            if room_energy:
+                await asyncio.sleep(
+                    max(
+                        0,
+                        (
+                            self._prev_request
+                            + datetime.timedelta(seconds=RATE_LIMIT_SECONDS)
+                            - datetime.datetime.utcnow()
+                        ).total_seconds()
+                        # A little extra, as the loop clock and utcnow() differ.
+                        + 0.1,
+                    )
+                )
             try:
                 response = await self._request(f"{API_URL}/rest/v1/energy_log/{room_id}", retry=1)
             except RateLimitError:
