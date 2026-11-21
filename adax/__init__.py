@@ -110,16 +110,21 @@ class Adax:
         self._write_task = None
 
     async def fetch_rooms_info(self):
-        """Get rooms info."""
+        """Get rooms info.
+
+        Return the rooms, or None if no new data was received. get_rooms()
+        keeps returning the rooms from the last successful fetch.
+        """
         try:
             response = await self._request(API_URL + "/rest/v1/content/?withEnergy=1", retry=1)
         except RateLimitError:
-            return
+            return None
         if response is None:
-            return
+            return None
         json_data = await response.json()
-        if json_data is None:
-            return
+        if not json_data or "rooms" not in json_data:
+            _LOGGER.warning("No room data in the response from Adax")
+            return None
 
         for room in json_data["rooms"]:
             for dev in json_data["devices"]:
@@ -128,6 +133,7 @@ class Adax:
             room["targetTemperature"] = room.get("targetTemperature", 0) / 100.0
             room["temperature"] = room.get("temperature", 0) / 100.0
         self._rooms = json_data["rooms"]
+        return self._rooms
 
     async def fetch_energy_info(self):
         """Get rooms info."""
